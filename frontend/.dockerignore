@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+app.log
+app.err
+.env
+.idea/
+.vscode/

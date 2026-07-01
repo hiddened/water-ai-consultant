@@ -1,0 +1,4 @@
+ALTER TABLE ai_document ADD COLUMN IF NOT EXISTS storage_type VARCHAR(32) NOT NULL DEFAULT 'local';
+ALTER TABLE ai_document ADD COLUMN IF NOT EXISTS storage_bucket VARCHAR(128);
+ALTER TABLE ai_document ADD COLUMN IF NOT EXISTS storage_object_key VARCHAR(768);
+ALTER TABLE ai_document ADD COLUMN IF NOT EXISTS content_type VARCHAR(128);
