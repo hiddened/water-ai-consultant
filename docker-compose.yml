@@ -16,7 +16,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    restart: unless-stopped
+    restart: "no"
 
   minio:
     image: minio/minio:latest
@@ -30,7 +30,7 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
-    restart: unless-stopped
+    restart: "no"
 
   water-ai-consultant-server:
     build:
@@ -70,7 +70,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
-    restart: unless-stopped
+    restart: "no"
 
   water-ai-consultant-web:
     build:
@@ -82,7 +82,7 @@ services:
         condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-3000}:80"
-    restart: unless-stopped
+    restart: "no"
 
 volumes:
   postgres_data:

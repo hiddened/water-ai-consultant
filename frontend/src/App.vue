@@ -745,6 +745,12 @@ const projectOptions = computed(() => projects.value.map(project => ({
   id: String(project.id ?? ''),
   name: String(project.project_name ?? project.project_code ?? project.id ?? '')
 })))
+const chatRuntimeLabel = computed(() => {
+  if (!chatResult.value) return '知识库问答'
+  const provider = formatProviderName(chatResult.value.model_provider || chatResult.value.llm_provider)
+  const strategy = formatSearchStrategy(chatResult.value.search_strategy)
+  return [provider, strategy].filter(Boolean).join(' / ')
+})
 const chatHistorySummary = computed(() => {
   const questionCount = chatSessions.value.reduce((total, session) => total + Number(session.question_count ?? 0), 0)
   return [
@@ -774,8 +780,21 @@ const searchDebugGroups = computed(() => {
     { title: '历史需求案例', list: searchResult.value.requirement_cases, pageKey: 'searchRequirementCases' }
   ]
 })
+const activeProjectId = computed(() => {
+  // 顶部项目摘要跟随当前页面的项目选择，避免被其他页面残留筛选条件覆盖。
+  if (activeKey.value === 'chat') return chatForm.project_id
+  if (activeKey.value === 'requirement-check') return requirementForm.project_id
+  if (activeKey.value === 'search-debug') return searchForm.project_id
+  if (activeKey.value === 'eval') return evalForm.project_id
+  if (activeKey.value === 'eval-runs') return evalBatchFilters.project_id || evalForm.project_id
+  if (activeKey.value === 'chat-history') return chatHistoryFilters.project_id
+  if (activeKey.value === 'feedback') return feedbackFilters.project_id
+  if (activeKey.value === 'documents') return uploadForm.project_id || filters.project_id
+  if (activeModule.value?.requiresProject) return filters.project_id
+  return filters.project_id || chatForm.project_id || requirementForm.project_id || searchForm.project_id || evalForm.project_id || projectOptions.value[0]?.id || ''
+})
 const currentProjectSummary = computed(() => {
-  const selectedId = filters.project_id || chatForm.project_id || requirementForm.project_id || searchForm.project_id || evalForm.project_id || projectOptions.value[0]?.id || ''
+  const selectedId = activeProjectId.value
   const project = projects.value.find(item => String(item.id ?? '') === selectedId) ?? projects.value[0]
   return {
     code: String(project?.project_code ?? 'DEMO_WATER'),
@@ -800,7 +819,7 @@ const dashboardMetrics = computed(() => {
 const capabilityCards = [
   { title: '结构化知识库', desc: '项目、页面、能力、接口、数据表和历史需求案例统一管理。', status: '已接入' },
   { title: '文档解析切片', desc: '上传文档后提取文本、切片入库，并保留 chunk 级引用来源。', status: '异步化' },
-  { title: 'AI 智能问答', desc: '基于检索上下文调用 DeepSeek 或 Mock LLM，资料不足时拒答。', status: '可用' },
+  { title: 'AI 智能问答', desc: '基于检索上下文调用大模型，资料不足时拒答。', status: '可用' },
   { title: '需求可行性分析', desc: '能力清单和历史案例优先，输出结构化等级、风险和方案。', status: '可用' },
   { title: '引用溯源', desc: '回答返回 references，可展开原文、分数类型和索引状态。', status: '已开启' },
   { title: '检索调试', desc: '不调用模型，直接查看 chunk、页面、接口等检索命中。', status: '可排查' },
@@ -1090,7 +1109,8 @@ function resetPage(key: string) {
 
 function buildListUrl(module: ModuleConfig) {
   const params = new URLSearchParams()
-  if (filters.project_id) params.set('project_id', filters.project_id)
+  // 项目管理本身不是项目内资源，不能继承全局 project_id，否则会被后端按项目 id 精确过滤。
+  if (module.requiresProject && filters.project_id) params.set('project_id', filters.project_id)
   if (filters.module_name) params.set('module_name', filters.module_name)
   if (filters.keyword) params.set('keyword', filters.keyword)
   const query = params.toString()
@@ -2041,6 +2061,126 @@ function formatCell(value: unknown) {
   return String(value)
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function renderInlineMarkdown(value: string) {
+  return value
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([Rr]\d+)\]/g, '<span class="answer-cite">[$1]</span>')
+}
+
+function renderMarkdown(value: string) {
+  const escaped = escapeHtml(value || '')
+  const lines = escaped.split(/\r?\n/)
+  const blocks: string[] = []
+  let paragraph: string[] = []
+  let list: string[] = []
+  let listType: 'ul' | 'ol' = 'ul'
+  let code: string[] = []
+  let inCode = false
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    blocks.push(`<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`)
+    paragraph = []
+  }
+  const flushList = () => {
+    if (!list.length) return
+    blocks.push(`<${listType}>${list.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${listType}>`)
+    list = []
+    listType = 'ul'
+  }
+  const flushCode = () => {
+    if (!code.length) return
+    blocks.push(`<pre><code>${code.join('\n')}</code></pre>`)
+    code = []
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```')) {
+      if (inCode) {
+        flushCode()
+        inCode = false
+      } else {
+        flushParagraph()
+        flushList()
+        inCode = true
+      }
+      continue
+    }
+    if (inCode) {
+      code.push(line)
+      continue
+    }
+    if (!trimmed) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/)
+    if (heading) {
+      flushParagraph()
+      flushList()
+      const level = Math.min(heading[1].length + 2, 5)
+      blocks.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
+      continue
+    }
+    const listItem = trimmed.match(/^[-*]\s+(.+)$/)
+    if (listItem) {
+      flushParagraph()
+      if (list.length && listType !== 'ul') flushList()
+      listType = 'ul'
+      list.push(listItem[1])
+      continue
+    }
+    const orderedListItem = trimmed.match(/^\d+[.)、]\s+(.+)$/)
+    if (orderedListItem) {
+      flushParagraph()
+      if (list.length && listType !== 'ol') flushList()
+      listType = 'ol'
+      list.push(orderedListItem[1])
+      continue
+    }
+    flushList()
+    paragraph.push(trimmed)
+  }
+  flushParagraph()
+  flushList()
+  flushCode()
+  return blocks.join('')
+}
+
+function formatProviderName(value: unknown) {
+  const provider = String(value ?? '').trim().toLowerCase()
+  if (!provider) return ''
+  const labels: Record<string, string> = {
+    deepseek: 'DeepSeek',
+    openai: 'OpenAI',
+    mock: '本地兜底'
+  }
+  return labels[provider] ?? provider
+}
+
+function formatSearchStrategy(value: unknown) {
+  const strategy = String(value ?? '').trim().toLowerCase()
+  const labels: Record<string, string> = {
+    keyword: '关键词检索',
+    vector: '向量检索',
+    hybrid: '混合检索',
+    fallback_keyword: '关键词降级'
+  }
+  return labels[strategy] ?? strategy
+}
+
 function formatReference(reference: ReferenceItem) {
   return `${reference.source_type} / ${reference.title ?? reference.source_title}`
 }
@@ -2265,7 +2405,7 @@ onBeforeUnmount(() => {
           <div class="titleblock-row"><span>行业</span><span>{{ currentProjectSummary.industry }}</span></div>
           <div class="titleblock-row"><span>更新</span><span>{{ currentProjectSummary.updated }}</span></div>
         </div>
-        <a href="/swagger-ui/index.html" target="_blank" rel="noreferrer">OpenAPI</a>
+        <a href="/swagger-ui/index.html" target="_blank" rel="noreferrer">接口文档</a>
       </header>
       <svg class="contour" viewBox="0 0 1200 18" preserveAspectRatio="none" aria-hidden="true">
         <path d="M0 9 Q 30 2, 60 9 T 120 9 T 180 9 T 240 9 T 300 9 T 360 9 T 420 9 T 480 9 T 540 9 T 600 9 T 660 9 T 720 9 T 780 9 T 840 9 T 900 9 T 960 9 T 1020 9 T 1080 9 T 1140 9 T 1200 9" fill="none" stroke="currentColor" stroke-width="1" />
@@ -2369,7 +2509,7 @@ onBeforeUnmount(() => {
       <section v-else-if="activeKey === 'chat'" class="ai-panel">
         <div class="manager-header">
           <div>
-            <p class="panel-label">关键词检索 + Mock LLM</p>
+            <p class="panel-label">{{ chatRuntimeLabel }}</p>
             <h2>智能问答</h2>
           </div>
           <button class="primary-action" type="button" :disabled="chatLoading" @click="sendChat">
@@ -2404,9 +2544,13 @@ onBeforeUnmount(() => {
         <section v-if="chatResult" class="answer-card">
           <div class="answer-main">
             <p class="panel-label">回答</p>
-            <h3>{{ chatResult.answer }}</h3>
-            <p>置信度：{{ chatResult.confidence }} / Trace：{{ chatResult.trace_id }}</p>
-            <p>模型：{{ chatResult.llm_provider || '-' }} / 检索策略：{{ chatResult.search_strategy || '-' }}</p>
+            <div class="answer-markdown" v-html="renderMarkdown(chatResult.answer)"></div>
+            <div class="answer-meta">
+              <span>置信度 {{ chatResult.confidence }}</span>
+              <span>{{ formatProviderName(chatResult.model_provider || chatResult.llm_provider) || '-' }}</span>
+              <span>{{ formatSearchStrategy(chatResult.search_strategy) || '-' }}</span>
+              <span>Trace {{ chatResult.trace_id }}</span>
+            </div>
             <details class="debug-details">
               <summary>调试信息</summary>
               <dl>
@@ -2423,7 +2567,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="reference-list">
-            <p class="panel-label">References</p>
+            <p class="panel-label">引用来源</p>
             <article v-for="reference in chatResult.references" :key="`${reference.source_type}-${reference.source_id}`" class="clickable-result" @click="openReferenceModal(reference)">
               <strong>{{ formatReference(reference) }}</strong>
               <span>{{ reference.source_locator }}</span>

@@ -2,6 +2,41 @@
 
 `water-ai-consultant` 是一个面向水务行业内部团队的智能顾问系统，服务对象包括售前、产品、实施、开发和运维人员。它不是对外市民客服，也不是单纯文档问答机器人，而是围绕项目资料、页面操作、系统能力、接口、数据库说明和历史需求案例形成的内部知识与决策辅助平台。
 
+## 界面预览
+
+<table>
+  <tr>
+    <td width="50%">
+      <strong>Dashboard 总览</strong><br />
+      <img src="docs/screenshots/01-dashboard.png" alt="Dashboard 总览" />
+    </td>
+    <td width="50%">
+      <strong>智能问答结果</strong><br />
+      <img src="docs/screenshots/04-smart-chat-answer.png" alt="智能问答结果" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <strong>需求可行性分析</strong><br />
+      <img src="docs/screenshots/05-requirement-analysis.png" alt="需求可行性分析" />
+    </td>
+    <td width="50%">
+      <strong>文档知识库</strong><br />
+      <img src="docs/screenshots/03-document-knowledge-base.png" alt="文档知识库" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <strong>项目管理</strong><br />
+      <img src="docs/screenshots/02-project-management.png" alt="项目管理" />
+    </td>
+    <td width="50%">
+      <strong>评测运行看板</strong><br />
+      <img src="docs/screenshots/06-evaluation-run-dashboard.png" alt="评测运行看板" />
+    </td>
+  </tr>
+</table>
+
 ## 核心能力
 
 - 项目文档知识库
