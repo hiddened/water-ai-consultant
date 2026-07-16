@@ -15,7 +15,7 @@ import java.util.UUID;
 @Service
 public class ModelConfigService {
 
-    private static final Set<String> PROVIDERS = Set.of("mock", "deepseek", "openai_compatible");
+    private static final Set<String> PROVIDERS = Set.of("deepseek", "openai", "openai_compatible");
     private static final Set<String> MODEL_TYPES = Set.of("chat", "embedding");
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
@@ -33,7 +33,7 @@ public class ModelConfigService {
                        model_name, dimension, temperature, max_tokens, enabled,
                        default_config, remark, created_at, updated_at
                 FROM ai_model_config
-                WHERE deleted = FALSE
+                WHERE deleted = FALSE AND provider <> 'mock'
                 """);
         if (provider != null && !provider.isBlank()) {
             sql.append("\n AND provider = :provider\n");
@@ -57,7 +57,7 @@ public class ModelConfigService {
                                model_name, dimension, temperature, max_tokens, enabled,
                                default_config, remark, created_at, updated_at
                         FROM ai_model_config
-                        WHERE id = :id AND deleted = FALSE
+                        WHERE id = :id AND deleted = FALSE AND provider <> 'mock'
                         """, new MapSqlParameterSource("id", id), new ColumnMapRowMapper())
                 .stream()
                 .findFirst()
@@ -148,7 +148,7 @@ public class ModelConfigService {
         return jdbcTemplate.query("""
                         SELECT *
                         FROM ai_model_config
-                        WHERE id = :id AND deleted = FALSE
+                        WHERE id = :id AND deleted = FALSE AND provider <> 'mock'
                         """, new MapSqlParameterSource("id", id), new ColumnMapRowMapper())
                 .stream()
                 .findFirst()

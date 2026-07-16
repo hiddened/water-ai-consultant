@@ -28,22 +28,12 @@ cp .env.example .env
 | `MINIO_ACCESS_KEY` | `minioadmin` | MinIO 访问账号 |
 | `MINIO_SECRET_KEY` | `minioadmin` | MinIO 访问密钥 |
 | `MINIO_BUCKET` | `water-ai-consultant` | 文档原文件存储 bucket |
-| `LLM_PROVIDER` | `mock` | `mock` 或 `deepseek` |
+| `LLM_PROVIDER` | `deepseek` | `deepseek`、`openai` 或 `openai_compatible` |
 | `DEEPSEEK_API_KEY` | 空 | DeepSeek API Key |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek 兼容接口地址 |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | DeepSeek 模型名 |
-| `EMBEDDING_PROVIDER` | `mock` | Embedding 提供方 |
+| `DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek 模型名 |
+| `EMBEDDING_PROVIDER` | `none` | `none` 或 OpenAI 兼容 Embedding 提供方 |
 | `VECTOR_PROVIDER` | `pgvector` | 向量检索提供方 |
-
-## Mock 模式
-
-默认配置：
-
-```env
-LLM_PROVIDER=mock
-```
-
-Mock 模式不调用外部模型，适合本地启动、页面演示、接口联调和自动评分流程验证。
 
 ## DeepSeek 模式
 
@@ -51,7 +41,7 @@ Mock 模式不调用外部模型，适合本地启动、页面演示、接口联
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=你的 DeepSeek API Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_MODEL=deepseek-chat
 ```
 
 不要提交真实 API Key。`.gitignore` 已忽略 `.env`。
@@ -94,7 +84,7 @@ psql -h 127.0.0.1 -U postgres -d water_ai_consultant -f database/migrations/2026
 
 ## pgvector 和 Embedding
 
-当前项目保留 pgvector/embedding 配置入口。没有真实 embedding 配置时，系统使用 MockEmbeddingClient 或关键词检索兜底。
+当前项目通过 Spring AI `EmbeddingModel` 和扩展后的 Spring AI `VectorStore` 接入 pgvector。没有真实 embedding 配置时，系统自动使用关键词检索，不生成伪向量。
 
 如果启用真实向量检索，需要确认：
 

@@ -29,14 +29,14 @@ app:
       secret-key: ${MINIO_SECRET_KEY:minioadmin}
       bucket: ${MINIO_BUCKET:water-ai-consultant}
   llm:
-    provider: ${LLM_PROVIDER:mock}
+    provider: ${LLM_PROVIDER:deepseek}
     deepseek:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       api-key: ${DEEPSEEK_API_KEY:}
-      model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+      model: ${DEEPSEEK_MODEL:deepseek-chat}
       max-tokens: ${DEEPSEEK_MAX_TOKENS:2048}
   embedding:
-    provider: ${EMBEDDING_PROVIDER:mock}
+    provider: ${EMBEDDING_PROVIDER:none}
     base-url: ${EMBEDDING_BASE_URL:}
     api-key: ${EMBEDDING_API_KEY:}
     model: ${EMBEDDING_MODEL:text-embedding-3-small}

@@ -4,6 +4,8 @@ import com.waterai.consultant.chat.ChatService;
 import com.waterai.consultant.common.error.BusinessException;
 import com.waterai.consultant.common.error.ErrorCode;
 import com.waterai.consultant.retrieval.KnowledgeEvidence;
+import com.waterai.consultant.retrieval.SpringAiDocumentMapper;
+import org.springframework.ai.document.Document;
 import org.springframework.jdbc.core.ColumnMapRowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -24,9 +26,15 @@ public class PromptTemplateService {
     private static final Set<String> OUTPUT_FORMATS = Set.of("markdown", "json", "structured_json");
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final SpringAiPromptRenderer promptRenderer;
+    private final SpringAiDocumentMapper documentMapper;
 
-    public PromptTemplateService(NamedParameterJdbcTemplate jdbcTemplate) {
+    public PromptTemplateService(NamedParameterJdbcTemplate jdbcTemplate,
+                                 SpringAiPromptRenderer promptRenderer,
+                                 SpringAiDocumentMapper documentMapper) {
         this.jdbcTemplate = jdbcTemplate;
+        this.promptRenderer = promptRenderer;
+        this.documentMapper = documentMapper;
     }
 
     public List<Map<String, Object>> list(String templateType, String mode, Boolean enabled) {
@@ -276,11 +284,7 @@ public class PromptTemplateService {
     }
 
     private String render(String template, Map<String, String> variables) {
-        String result = template == null ? "" : template;
-        for (Map.Entry<String, String> entry : variables.entrySet()) {
-            result = result.replace("{{" + entry.getKey() + "}}", fallback(entry.getValue(), "暂无"));
-        }
-        return result;
+        return promptRenderer.render(template, variables);
     }
 
     private String formatEvidence(List<KnowledgeEvidence> evidences) {
@@ -289,12 +293,12 @@ public class PromptTemplateService {
         }
         AtomicInteger index = new AtomicInteger(1);
         StringBuilder builder = new StringBuilder();
-        for (KnowledgeEvidence evidence : evidences) {
+        for (Document document : documentMapper.toDocuments(evidences)) {
             builder.append("[R").append(index.getAndIncrement()).append("] ")
-                    .append(evidence.sourceType()).append(" / ")
-                    .append(evidence.sourceTitle()).append(" / ")
-                    .append(evidence.sourceLocator()).append("\n")
-                    .append(evidence.content()).append("\n\n");
+                    .append(document.getMetadata().get("source_type")).append(" / ")
+                    .append(document.getMetadata().get("title")).append(" / ")
+                    .append(document.getMetadata().get("source_locator")).append("\n")
+                    .append(document.getText()).append("\n\n");
         }
         return builder.toString();
     }

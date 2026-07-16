@@ -1,25 +1,22 @@
 package com.waterai.consultant.model;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.waterai.consultant.ai.LlmClient;
+import com.waterai.consultant.ai.SpringAiModelFactory;
 import com.waterai.consultant.chat.ChatService;
 import com.waterai.consultant.common.error.BusinessException;
 import com.waterai.consultant.common.error.ErrorCode;
-import com.waterai.consultant.embedding.EmbeddingClient;
 import com.waterai.consultant.retrieval.KnowledgeEvidence;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.ColumnMapRowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,32 +27,50 @@ public class ModelRuntimeService {
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-    private final LlmClient fallbackLlmClient;
-    private final EmbeddingClient fallbackEmbeddingClient;
+    private final SpringAiModelFactory modelFactory;
     private final String envProvider;
     private final String envDeepSeekBaseUrl;
+    private final String envDeepSeekApiKey;
     private final String envDeepSeekModel;
+    private final int envDeepSeekMaxTokens;
+    private final String envEmbeddingProvider;
+    private final String envEmbeddingBaseUrl;
+    private final String envEmbeddingApiKey;
+    private final String envEmbeddingModel;
+    private final int envEmbeddingDimension;
 
     public ModelRuntimeService(NamedParameterJdbcTemplate jdbcTemplate,
                                ObjectMapper objectMapper,
-                               LlmClient fallbackLlmClient,
-                               EmbeddingClient fallbackEmbeddingClient,
+                               SpringAiModelFactory modelFactory,
                                @Value("${app.llm.provider}") String envProvider,
                                @Value("${app.llm.deepseek.base-url}") String envDeepSeekBaseUrl,
-                               @Value("${app.llm.deepseek.model}") String envDeepSeekModel) {
+                               @Value("${app.llm.deepseek.api-key}") String envDeepSeekApiKey,
+                               @Value("${app.llm.deepseek.model}") String envDeepSeekModel,
+                               @Value("${app.llm.deepseek.max-tokens}") int envDeepSeekMaxTokens,
+                               @Value("${app.embedding.provider}") String envEmbeddingProvider,
+                               @Value("${app.embedding.base-url}") String envEmbeddingBaseUrl,
+                               @Value("${app.embedding.api-key}") String envEmbeddingApiKey,
+                               @Value("${app.embedding.model}") String envEmbeddingModel,
+                               @Value("${app.embedding.dimension}") int envEmbeddingDimension) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
-        this.fallbackLlmClient = fallbackLlmClient;
-        this.fallbackEmbeddingClient = fallbackEmbeddingClient;
+        this.modelFactory = modelFactory;
         this.envProvider = envProvider;
         this.envDeepSeekBaseUrl = envDeepSeekBaseUrl;
+        this.envDeepSeekApiKey = envDeepSeekApiKey;
         this.envDeepSeekModel = envDeepSeekModel;
+        this.envDeepSeekMaxTokens = envDeepSeekMaxTokens;
+        this.envEmbeddingProvider = envEmbeddingProvider;
+        this.envEmbeddingBaseUrl = envEmbeddingBaseUrl;
+        this.envEmbeddingApiKey = envEmbeddingApiKey;
+        this.envEmbeddingModel = envEmbeddingModel;
+        this.envEmbeddingDimension = envEmbeddingDimension;
     }
 
     public ModelMetadata chatMetadata() {
         return defaultConfig("chat")
                 .map(config -> new ModelMetadata(toUuid(config.get("id")), string(config.get("provider")), string(config.get("model_name"))))
-                .orElse(new ModelMetadata(null, envProvider, fallbackModelName()));
+                .orElse(new ModelMetadata(null, envProvider, envDeepSeekModel));
     }
 
     public ModelInvocationResult answer(String systemPrompt,
@@ -63,65 +78,76 @@ public class ModelRuntimeService {
                                         String question,
                                         String mode,
                                         List<KnowledgeEvidence> evidences) {
-        Map<String, Object> config = defaultConfig("chat").orElse(null);
-        if (config == null) {
-            String content = fallbackLlmClient.answer(systemPrompt + "\n\n" + userPrompt, question, mode, evidences);
-            return new ModelInvocationResult(null, envProvider, fallbackModelName(), content);
+        if (evidences.isEmpty()) {
+            return invocationMetadata(ChatService.INSUFFICIENT_ANSWER);
         }
+        Map<String, Object> config = defaultConfig("chat").orElseGet(this::environmentChatConfig);
         String content = invokeChatConfig(config, systemPrompt, userPrompt, false);
-        return new ModelInvocationResult(toUuid(config.get("id")), string(config.get("provider")), string(config.get("model_name")), content);
+        return result(config, content);
     }
 
     public ModelInvocationResult analyzeRequirement(String systemPrompt,
-                                                    String userPrompt,
-                                                    String requirementDesc,
-                                                    String moduleName,
-                                                    List<KnowledgeEvidence> evidences) {
-        Map<String, Object> config = defaultConfig("chat").orElse(null);
-        if (config == null) {
-            String content = fallbackLlmClient.analyzeRequirement(systemPrompt + "\n\n" + userPrompt, requirementDesc, moduleName, evidences);
-            return new ModelInvocationResult(null, envProvider, fallbackModelName(), content);
+                                                     String userPrompt,
+                                                     String requirementDesc,
+                                                     String moduleName,
+                                                     List<KnowledgeEvidence> evidences) {
+        if (evidences.isEmpty()) {
+            return invocationMetadata("{\"feasibility_level\":\"D\",\"conclusion\":\"" + ChatService.INSUFFICIENT_ANSWER + "\"}");
         }
+        Map<String, Object> config = defaultConfig("chat").orElseGet(this::environmentChatConfig);
         String content = invokeChatConfig(config, systemPrompt, userPrompt, true);
-        return new ModelInvocationResult(toUuid(config.get("id")), string(config.get("provider")), string(config.get("model_name")), content);
+        return result(config, content);
     }
 
     public List<Double> embedText(String text) {
-        Map<String, Object> config = defaultConfig("embedding").orElse(null);
-        if (config == null) {
-            return fallbackEmbeddingClient.embedText(text);
+        Map<String, Object> config = defaultConfig("embedding").orElseGet(this::environmentEmbeddingConfig);
+        EmbeddingModel embeddingModel = modelFactory.createEmbeddingModel(
+                string(config.get("provider")),
+                string(config.get("base_url")),
+                string(config.get("api_key_value")),
+                string(config.get("model_name")),
+                intObject(config.get("dimension"))
+        );
+        try {
+            float[] embedding = embeddingModel.embed(text == null ? "" : text);
+            validateDimension(embedding.length, intValue(config.get("dimension"), envEmbeddingDimension));
+            return Arrays.stream(toDoubleArray(embedding)).boxed().toList();
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Spring AI Embedding 调用失败：" + safeMessage(ex));
         }
-        if ("mock".equals(string(config.get("provider")))) {
-            return mockEmbedding(text, intValue(config.get("dimension"), fallbackEmbeddingClient.dimension()));
-        }
-        return invokeEmbeddingConfig(config, List.of(text)).getFirst();
     }
 
     public String embeddingProvider() {
-        return defaultConfig("embedding").map(config -> string(config.get("provider"))).orElse(fallbackEmbeddingClient.provider());
+        return defaultConfig("embedding").map(config -> string(config.get("provider"))).orElse(envEmbeddingProvider);
     }
 
     public int embeddingDimension() {
-        return defaultConfig("embedding").map(config -> intValue(config.get("dimension"), fallbackEmbeddingClient.dimension())).orElse(fallbackEmbeddingClient.dimension());
+        return defaultConfig("embedding")
+                .map(config -> intValue(config.get("dimension"), envEmbeddingDimension))
+                .orElse(envEmbeddingDimension);
     }
 
     public boolean realEmbedding() {
         return defaultConfig("embedding")
-                .map(config -> !"mock".equals(string(config.get("provider"))))
-                .orElse(fallbackEmbeddingClient.realEmbedding());
+                .map(config -> supportedProvider(string(config.get("provider"))) && hasText(config.get("api_key_value")))
+                .orElse(supportedProvider(envEmbeddingProvider) && hasText(envEmbeddingApiKey));
     }
 
     public Map<String, Object> testConfig(Map<String, Object> config) {
         String modelType = string(config.get("model_type"));
         if ("chat".equals(modelType)) {
             String content = invokeChatConfig(config, "你是连接测试助手，只返回一句简短中文。", "请回答：模型连接正常。", false);
-            return Map.of("success", true, "message", "模型连接正常", "sample", content);
+            return Map.of("success", true, "message", "Spring AI 模型连接正常", "sample", content);
         }
         if ("embedding".equals(modelType)) {
-            List<Double> vector = "mock".equals(string(config.get("provider")))
-                    ? mockEmbedding("水务模型配置测试", intValue(config.get("dimension"), fallbackEmbeddingClient.dimension()))
-                    : invokeEmbeddingConfig(config, List.of("水务模型配置测试")).getFirst();
-            return Map.of("success", true, "message", "Embedding 连接正常", "dimension", vector.size());
+            EmbeddingModel model = modelFactory.createEmbeddingModel(
+                    string(config.get("provider")), string(config.get("base_url")), string(config.get("api_key_value")),
+                    string(config.get("model_name")), intObject(config.get("dimension")));
+            float[] vector = model.embed("水务模型配置测试");
+            validateDimension(vector.length, intValue(config.get("dimension"), vector.length));
+            return Map.of("success", true, "message", "Spring AI Embedding 连接正常", "dimension", vector.length);
         }
         throw new BusinessException(ErrorCode.BAD_REQUEST, "model_type 不支持");
     }
@@ -130,155 +156,118 @@ public class ModelRuntimeService {
         List<Map<String, Object>> rows = jdbcTemplate.query("""
                 SELECT *
                 FROM ai_model_config
-                WHERE deleted = FALSE AND enabled = TRUE AND default_config = TRUE AND model_type = :model_type
+                WHERE deleted = FALSE
+                  AND enabled = TRUE
+                  AND default_config = TRUE
+                  AND model_type = :model_type
+                  AND provider <> 'mock'
                 ORDER BY updated_at DESC
                 LIMIT 1
                 """, new MapSqlParameterSource("model_type", modelType), new ColumnMapRowMapper());
         return rows.stream().findFirst();
     }
 
-    private String invokeChatConfig(Map<String, Object> config, String systemPrompt, String userPrompt, boolean jsonMode) {
-        String provider = string(config.get("provider"));
-        if ("mock".equals(provider)) {
-            return jsonMode
-                    ? "{\"feasibility_level\":\"D\",\"conclusion\":\"Mock 模型连接正常。\"}"
-                    : "Mock 模型连接正常。";
-        }
-        String apiKey = string(config.get("api_key_value"));
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "模型 API Key 未配置");
-        }
-        String baseUrl = trimTrailingSlash(string(config.get("base_url")));
-        if (baseUrl == null || baseUrl.isBlank()) {
-            baseUrl = "deepseek".equals(provider) ? trimTrailingSlash(envDeepSeekBaseUrl) : null;
-        }
-        if (baseUrl == null || baseUrl.isBlank()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "模型 Base URL 未配置");
-        }
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", string(config.get("model_name")));
-        body.put("messages", List.of(
-                Map.of("role", "system", "content", nullToEmpty(systemPrompt)),
-                Map.of("role", "user", "content", nullToEmpty(userPrompt))
-        ));
-        body.put("stream", false);
-        Integer maxTokens = intObject(config.get("max_tokens"));
-        if (maxTokens != null) {
-            body.put("max_tokens", maxTokens);
-        }
-        BigDecimal temperature = decimal(config.get("temperature"));
-        if (temperature != null) {
-            body.put("temperature", temperature);
-        }
-        if (jsonMode) {
-            body.put("response_format", Map.of("type", "json_object"));
-        }
-        if ("deepseek".equals(provider)) {
-            body.put("thinking", Map.of("type", "disabled"));
-        }
-
+    private String invokeChatConfig(Map<String, Object> config, String systemPrompt, String userPrompt, boolean structuredOutput) {
         try {
-            String response = RestClient.builder()
-                    .baseUrl(baseUrl)
-                    .defaultHeader("Authorization", "Bearer " + apiKey)
-                    .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)
-                    .build()
-                    .post()
-                    .uri("/chat/completions")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
-            String content = objectMapper.readTree(response).path("choices").path(0).path("message").path("content").asText();
-            if (content == null || content.isBlank()) {
-                throw new IllegalStateException("模型返回内容为空");
+            ChatClient chatClient = modelFactory.createChatClient(
+                    string(config.get("provider")),
+                    string(config.get("base_url")),
+                    string(config.get("api_key_value")),
+                    string(config.get("model_name")),
+                    intObject(config.get("max_tokens")),
+                    decimal(config.get("temperature")),
+                    structuredOutput
+            );
+            if (!structuredOutput) {
+                String content = chatClient.prompt()
+                        .system(nullToEmpty(systemPrompt))
+                        .user(nullToEmpty(userPrompt))
+                        .call()
+                        .content();
+                return requireContent(content);
             }
-            return stripJsonFence(content.trim());
+
+            BeanOutputConverter<RequirementModelOutput> converter = new BeanOutputConverter<>(RequirementModelOutput.class, objectMapper);
+            RequirementModelOutput value = chatClient.prompt()
+                    .system(nullToEmpty(systemPrompt))
+                    .user(nullToEmpty(userPrompt) + "\n\n" + converter.getFormat())
+                    .call()
+                    .entity(converter);
+            if (value == null) {
+                throw new IllegalStateException("模型返回的结构化结果为空");
+            }
+            return objectMapper.writeValueAsString(value);
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
-            // 不记录 API Key，只把上游错误压缩为可读信息返回给调用方。
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "模型调用失败：" + ex.getMessage());
+            // 模型异常只返回压缩后的错误信息，禁止把 API Key 或完整请求写入日志和响应。
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Spring AI 模型调用失败：" + safeMessage(ex));
         }
     }
 
-    private List<List<Double>> invokeEmbeddingConfig(Map<String, Object> config, List<String> texts) {
-        String apiKey = string(config.get("api_key_value"));
-        String baseUrl = trimTrailingSlash(string(config.get("base_url")));
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "Embedding API Key 未配置");
+    private Map<String, Object> environmentChatConfig() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("id", null);
+        config.put("provider", envProvider);
+        config.put("base_url", envDeepSeekBaseUrl);
+        config.put("api_key_value", envDeepSeekApiKey);
+        config.put("model_name", envDeepSeekModel);
+        config.put("max_tokens", envDeepSeekMaxTokens);
+        config.put("temperature", BigDecimal.valueOf(0.2));
+        return config;
+    }
+
+    private Map<String, Object> environmentEmbeddingConfig() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("provider", envEmbeddingProvider);
+        config.put("base_url", envEmbeddingBaseUrl);
+        config.put("api_key_value", envEmbeddingApiKey);
+        config.put("model_name", envEmbeddingModel);
+        config.put("dimension", envEmbeddingDimension);
+        return config;
+    }
+
+    private ModelInvocationResult invocationMetadata(String content) {
+        ModelMetadata metadata = chatMetadata();
+        return new ModelInvocationResult(metadata.modelConfigId(), metadata.provider(), metadata.modelName(), content);
+    }
+
+    private ModelInvocationResult result(Map<String, Object> config, String content) {
+        return new ModelInvocationResult(toUuid(config.get("id")), string(config.get("provider")), string(config.get("model_name")), content);
+    }
+
+    private String requireContent(String content) {
+        if (content == null || content.isBlank()) {
+            throw new IllegalStateException("模型返回内容为空");
         }
-        if (baseUrl == null || baseUrl.isBlank()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "Embedding Base URL 未配置");
-        }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", string(config.get("model_name")));
-        body.put("input", texts);
-        try {
-            String response = RestClient.builder()
-                    .baseUrl(baseUrl)
-                    .defaultHeader("Authorization", "Bearer " + apiKey)
-                    .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)
-                    .build()
-                    .post()
-                    .uri("/embeddings")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
-            JsonNode data = objectMapper.readTree(response).path("data");
-            List<List<Double>> result = new ArrayList<>();
-            for (JsonNode item : data) {
-                List<Double> vector = new ArrayList<>();
-                for (JsonNode value : item.path("embedding")) {
-                    vector.add(value.asDouble());
-                }
-                int expectedDimension = intValue(config.get("dimension"), vector.size());
-                if (vector.size() != expectedDimension) {
-                    throw new IllegalStateException("Embedding 维度不匹配，期望 " + expectedDimension + "，实际 " + vector.size());
-                }
-                result.add(vector);
-            }
-            return result;
-        } catch (BusinessException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Embedding 调用失败：" + ex.getMessage());
+        return content.trim();
+    }
+
+    private void validateDimension(int actual, int expected) {
+        if (expected > 0 && actual != expected) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "Embedding 维度不匹配，期望 " + expected + "，实际 " + actual);
         }
     }
 
-    private List<Double> mockEmbedding(String text, int dimension) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] seed = digest.digest(nullToEmpty(text).getBytes(StandardCharsets.UTF_8));
-            List<Double> vector = new ArrayList<>(dimension);
-            for (int i = 0; i < dimension; i++) {
-                int value = seed[i % seed.length] & 0xff;
-                vector.add((value / 127.5d) - 1.0d);
-            }
-            return vector;
-        } catch (Exception ex) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Mock embedding 生成失败");
+    private double[] toDoubleArray(float[] values) {
+        double[] result = new double[values.length];
+        for (int i = 0; i < values.length; i++) {
+            result[i] = values[i];
         }
+        return result;
     }
 
-    private String fallbackModelName() {
-        return "deepseek".equals(envProvider) ? envDeepSeekModel : "mock";
+    private boolean supportedProvider(String provider) {
+        return "deepseek".equals(provider) || "openai".equals(provider) || "openai_compatible".equals(provider);
     }
 
-    private String stripJsonFence(String content) {
-        if (content.startsWith("```")) {
-            return content.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "").trim();
-        }
-        return content;
+    private boolean hasText(Object value) {
+        return value != null && !String.valueOf(value).isBlank();
     }
 
-    private String trimTrailingSlash(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    private String safeMessage(Exception ex) {
+        String message = ex.getMessage();
+        return message == null || message.isBlank() ? ex.getClass().getSimpleName() : message;
     }
 
     private String nullToEmpty(String value) {
@@ -294,10 +283,7 @@ public class ModelRuntimeService {
     }
 
     private Integer intObject(Object value) {
-        if (value == null) {
-            return null;
-        }
-        return ((Number) value).intValue();
+        return value == null ? null : ((Number) value).intValue();
     }
 
     private int intValue(Object value, int defaultValue) {
@@ -308,9 +294,6 @@ public class ModelRuntimeService {
         if (value == null) {
             return null;
         }
-        if (value instanceof BigDecimal decimal) {
-            return decimal;
-        }
-        return new BigDecimal(String.valueOf(value));
+        return value instanceof BigDecimal decimal ? decimal : new BigDecimal(String.valueOf(value));
     }
 }

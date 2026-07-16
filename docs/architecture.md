@@ -36,10 +36,10 @@ docker/postgres/
   |-- ai_requirement_case
   |
   v
-Prompt 渲染
+Spring AI Document + PromptTemplate
   |
   v
-Mock LLM / DeepSeek
+Spring AI ChatClient / DeepSeek
   |
   v
 结构化回答 + references
@@ -111,4 +111,4 @@ postgres
 - 无依据必须拒答。
 - references 是前端溯源、反馈和评测的共同基础。
 - 评测使用确定性规则评分，避免回归测试结果过度依赖模型波动。
-- Docker 默认使用 Mock 模型，保证无外部依赖也能演示。
+- 没有模型 Key 时服务仍可启动；生成式回答必须配置真实模型，检索调试和固定拒答不依赖模型。

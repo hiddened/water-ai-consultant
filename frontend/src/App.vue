@@ -523,11 +523,11 @@ const modelConfigFilters = reactive({
 })
 const modelConfigForm = reactive({
   config_name: '',
-  provider: 'mock',
+  provider: 'deepseek',
   model_type: 'chat',
-  base_url: '',
+  base_url: 'https://api.deepseek.com',
   api_key: '',
-  model_name: 'mock',
+  model_name: 'deepseek-chat',
   dimension: 1536,
   temperature: 0.2,
   max_tokens: 2048,
@@ -1862,11 +1862,11 @@ function openModelConfigModal(record?: ModelConfigRecord) {
   editingModelConfig.value = record ?? null
   modelConfigTestResult.value = null
   modelConfigForm.config_name = record?.config_name ?? ''
-  modelConfigForm.provider = record?.provider ?? 'mock'
+  modelConfigForm.provider = record?.provider ?? 'deepseek'
   modelConfigForm.model_type = record?.model_type ?? 'chat'
-  modelConfigForm.base_url = record?.base_url ?? ''
+  modelConfigForm.base_url = record?.base_url ?? 'https://api.deepseek.com'
   modelConfigForm.api_key = ''
-  modelConfigForm.model_name = record?.model_name ?? 'mock'
+  modelConfigForm.model_name = record?.model_name ?? 'deepseek-chat'
   modelConfigForm.dimension = Number(record?.dimension ?? 1536)
   modelConfigForm.temperature = Number(record?.temperature ?? 0.2)
   modelConfigForm.max_tokens = Number(record?.max_tokens ?? 2048)
@@ -2165,7 +2165,7 @@ function formatProviderName(value: unknown) {
   const labels: Record<string, string> = {
     deepseek: 'DeepSeek',
     openai: 'OpenAI',
-    mock: '本地兜底'
+    openai_compatible: 'OpenAI 兼容模型',
   }
   return labels[provider] ?? provider
 }
@@ -3027,8 +3027,8 @@ onBeforeUnmount(() => {
             <span>Provider</span>
             <select v-model="modelConfigFilters.provider">
               <option value="">全部</option>
-              <option value="mock">mock</option>
               <option value="deepseek">deepseek</option>
+              <option value="openai">openai</option>
               <option value="openai_compatible">openai_compatible</option>
             </select>
           </label>
@@ -3831,8 +3831,8 @@ onBeforeUnmount(() => {
           <label>
             <span>Provider</span>
             <select v-model="modelConfigForm.provider">
-              <option value="mock">mock</option>
               <option value="deepseek">deepseek</option>
+              <option value="openai">openai</option>
               <option value="openai_compatible">openai_compatible</option>
             </select>
           </label>
@@ -3853,7 +3853,7 @@ onBeforeUnmount(() => {
           </label>
           <label class="wide">
             <span>API Key</span>
-            <input v-model="modelConfigForm.api_key" type="password" :placeholder="editingModelConfig ? '留空则保留原密钥' : 'mock 可留空'" />
+            <input v-model="modelConfigForm.api_key" type="password" :placeholder="editingModelConfig ? '留空则保留原密钥' : '请输入真实模型 API Key'" />
           </label>
           <label>
             <span>向量维度</span>

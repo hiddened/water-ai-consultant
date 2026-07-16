@@ -3,6 +3,9 @@ package com.waterai.consultant.vector;
 import com.waterai.consultant.model.ModelRuntimeService;
 import com.waterai.consultant.retrieval.DocumentChunkSearchService;
 import com.waterai.consultant.retrieval.KnowledgeEvidence;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -60,6 +63,61 @@ public class PgVectorStore implements VectorStore {
         return new VectorSearchResult(merged, strategy, modelRuntimeService.embeddingProvider(), true, fallbackUsed);
     }
 
+    @Override
+    public void add(List<Document> documents) {
+        for (Document document : documents) {
+            UUID chunkId = chunkId(document);
+            try {
+                updateEmbedding(chunkId, modelRuntimeService.embedText(document.getText()));
+            } catch (RuntimeException ex) {
+                updateIndexStatus(chunkId, "failed", ex.getMessage());
+                throw ex;
+            }
+        }
+    }
+
+    @Override
+    public void delete(List<String> ids) {
+        for (String id : ids) {
+            jdbcTemplate.update("""
+                    UPDATE ai_document_chunk
+                    SET embedding = NULL, embedding_model = NULL, index_status = 'pending',
+                        index_error = NULL, last_indexed_at = NULL, updated_at = now()
+                    WHERE id = :id
+                    """, new MapSqlParameterSource("id", UUID.fromString(id)));
+        }
+    }
+
+    @Override
+    public void delete(Filter.Expression filterExpression) {
+        UUID projectId = extractProjectId(filterExpression);
+        if (projectId == null) {
+            throw new IllegalArgumentException("删除向量必须提供 project_id 过滤条件");
+        }
+        jdbcTemplate.update("""
+                UPDATE ai_document_chunk
+                SET embedding = NULL, embedding_model = NULL, index_status = 'pending',
+                    index_error = NULL, last_indexed_at = NULL, updated_at = now()
+                WHERE project_id = :project_id AND deleted = FALSE
+                """, new MapSqlParameterSource("project_id", projectId));
+    }
+
+    @Override
+    public List<Document> similaritySearch(SearchRequest request) {
+        UUID projectId = extractProjectId(request.getFilterExpression());
+        if (projectId == null) {
+            // 多项目知识必须显式隔离，禁止标准 VectorStore 调用跨项目召回。
+            throw new IllegalArgumentException("向量检索必须提供 project_id 过滤条件");
+        }
+        if (!modelRuntimeService.realEmbedding() || !vectorColumnAvailable()) {
+            return List.of();
+        }
+        return vectorSearch(projectId, request.getQuery(), request.getTopK()).stream()
+                .filter(evidence -> evidence.score().doubleValue() >= request.getSimilarityThreshold())
+                .map(this::toSpringAiDocument)
+                .toList();
+    }
+
     public int indexDocument(UUID documentId) {
         List<Map<String, Object>> chunks = jdbcTemplate.queryForList("""
                 SELECT id, content FROM ai_document_chunk
@@ -97,8 +155,11 @@ public class PgVectorStore implements VectorStore {
         for (Map<String, Object> chunk : chunks) {
             UUID chunkId = UUID.fromString(String.valueOf(chunk.get("id")));
             try {
-                List<Double> vector = modelRuntimeService.embedText(String.valueOf(chunk.get("content")));
-                updateEmbedding(chunkId, vector);
+                add(List.of(Document.builder()
+                        .id(chunkId.toString())
+                        .text(String.valueOf(chunk.get("content")))
+                        .metadata("chunk_id", chunkId.toString())
+                        .build()));
                 indexed++;
             } catch (Exception ex) {
                 updateIndexStatus(chunkId, "failed", ex.getMessage());
@@ -253,5 +314,52 @@ public class PgVectorStore implements VectorStore {
         String page = pageNumber == null ? "" : " page=" + pageNumber;
         String section = sectionTitle == null || sectionTitle.isBlank() ? "" : " section=" + sectionTitle;
         return "document=" + title + " chunk=" + chunkIndex + page + section + "\n" + content;
+    }
+
+    private UUID chunkId(Document document) {
+        Object metadataId = document.getMetadata().get("chunk_id");
+        String value = metadataId == null ? document.getId() : String.valueOf(metadataId);
+        try {
+            return UUID.fromString(value);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Spring AI Document 缺少有效 chunk_id", ex);
+        }
+    }
+
+    private Document toSpringAiDocument(KnowledgeEvidence evidence) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("project_scoped", true);
+        metadata.put("source_type", evidence.sourceType());
+        metadata.put("chunk_id", evidence.sourceId().toString());
+        metadata.put("document_id", evidence.documentId() == null ? "" : evidence.documentId().toString());
+        metadata.put("document_title", evidence.documentTitle());
+        metadata.put("chunk_index", evidence.chunkIndex());
+        metadata.put("module_name", evidence.moduleName());
+        return Document.builder()
+                .id(evidence.sourceId().toString())
+                .text(evidence.content())
+                .metadata(metadata)
+                .score(evidence.score().doubleValue())
+                .build();
+    }
+
+    private UUID extractProjectId(Filter.Expression expression) {
+        if (expression == null) {
+            return null;
+        }
+        if (expression.type() == Filter.ExpressionType.EQ
+                && expression.left() instanceof Filter.Key key
+                && "project_id".equals(key.key())
+                && expression.right() instanceof Filter.Value value) {
+            return UUID.fromString(String.valueOf(value.value()));
+        }
+        if (expression.type() == Filter.ExpressionType.AND) {
+            UUID left = expression.left() instanceof Filter.Expression nested ? extractProjectId(nested) : null;
+            if (left != null) {
+                return left;
+            }
+            return expression.right() instanceof Filter.Expression nested ? extractProjectId(nested) : null;
+        }
+        return null;
     }
 }

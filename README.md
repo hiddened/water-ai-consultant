@@ -52,16 +52,16 @@
 - 模型配置管理
 - Prompt 模板管理
 - 本地文件存储 / MinIO 对象存储
-- DeepSeek 真实模型调用，Mock LLM 兜底
+- Spring AI 1.1 + DeepSeek 真实模型调用
 
 ## 技术栈
 
-- 后端：Spring Boot 3、Java 21、Spring JDBC、Springdoc OpenAPI
+- 后端：Spring Boot 3.5、Spring AI 1.1、Java 21、Spring JDBC、Springdoc OpenAPI
 - 前端：Vue 3、Vite、TypeScript、Nginx
 - 数据库：PostgreSQL
 - 文档解析：Apache Tika
 - 文件存储：本地 storage / MinIO
-- 大模型：DeepSeek / Mock LLM
+- 大模型：Spring AI ChatClient + DeepSeek / OpenAI 兼容模型
 - 部署：Docker Compose
 
 ## 系统架构
@@ -78,7 +78,7 @@ Nginx + Vue dist
 Spring Boot API
   |------------------ storage/ 或 MinIO
   |------------------ Apache Tika
-  |------------------ Mock LLM / DeepSeek
+  |------------------ Spring AI / DeepSeek
   v
 PostgreSQL
 ```
@@ -92,7 +92,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-默认使用 `LLM_PROVIDER=mock`，不需要任何真实 API Key。
+服务在没有 API Key 时仍可启动，知识管理、文档解析、检索调试和资料不足拒答可用；生成式问答和需求分析需要配置真实模型。
 
 访问地址：
 
@@ -127,16 +127,10 @@ docker compose up -d --build
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=你的 DeepSeek API Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_MODEL=deepseek-chat
 ```
 
-没有 API Key 时保持：
-
-```env
-LLM_PROVIDER=mock
-```
-
-Mock 模型只用于本地演示和流程联调，不代表真实问答质量。
+模型调用通过 Spring AI `ChatClient` 完成，不再提供 Mock LLM。不要把真实 API Key 提交到仓库。
 
 ## 本地开发启动
 
@@ -226,7 +220,7 @@ Docker 首次启动会执行：
 
 ### 没有 DeepSeek Key 能启动吗？
 
-可以。默认 `.env.example` 使用 `LLM_PROVIDER=mock`，完整流程可启动和演示。
+可以启动。项目管理、文档解析、结构化知识、检索调试和健康检查不依赖模型；有检索依据的生成式问答和需求分析会明确提示未配置 API Key。
 
 ### 修改 seed SQL 后为什么没生效？
 
